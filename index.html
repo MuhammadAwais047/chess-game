@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Gambit — chess</title>
+  <meta name="description" content="Gambit is a complete chess game: full rules (castling, en passant, promotion, checkmate, stalemate, draws), a minimax AI opponent with three difficulty levels, move history in algebraic notation, and takeback.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='5' fill='%230b0f16'/%3E%3Ctext x='12' y='17.5' font-size='14' text-anchor='middle' fill='%23f5d889'%3E%E2%99%9E%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <header class="topbar" id="top">
+    <div class="topbar-inner">
+      <a class="brand" href="#top" aria-label="Gambit, chess">
+        <span class="brand-mark" aria-hidden="true">♞</span>
+        <span class="brand-word">Gambit</span>
+        <span class="brand-tag">chess</span>
+      </a>
+      <div class="topbar-actions">
+        <button id="new-game" class="btn ghost" type="button">New game</button>
+        <button id="flip" class="btn ghost" type="button">Flip board</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="wrap" id="main">
+    <section class="board-zone" aria-label="Chess board">
+      <div class="player-strip" id="top-strip">
+        <span class="strip-piece">♚</span>
+        <span class="strip-name" id="top-name">Computer (black)</span>
+        <span class="strip-captured" id="top-captured" aria-label="Pieces captured by black"></span>
+        <span class="strip-score" id="top-score" title="Material advantage"></span>
+      </div>
+
+      <div class="board-frame">
+        <div class="board" id="board" role="grid" aria-label="Chess board. Use arrow keys to explore squares."></div>
+        <div class="board-overlay" id="promo-overlay" hidden>
+          <div class="promo-card" role="dialog" aria-label="Choose a promotion piece">
+            <p class="promo-title">Promote pawn to</p>
+            <div class="promo-row" id="promo-row"></div>
+          </div>
+        </div>
+        <div class="board-overlay" id="game-over" hidden>
+          <div class="over-card" role="alertdialog" aria-labelledby="over-title">
+            <h2 id="over-title">Checkmate</h2>
+            <p id="over-sub">White wins</p>
+            <button class="btn solid" id="over-new" type="button">Play again</button>
+            <button class="btn ghost" id="over-close" type="button">Review board</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="player-strip" id="bottom-strip">
+        <span class="strip-piece">♔</span>
+        <span class="strip-name" id="bottom-name">You (white)</span>
+        <span class="strip-captured" id="bottom-captured" aria-label="Pieces captured by white"></span>
+        <span class="strip-score" id="bottom-score" title="Material advantage"></span>
+      </div>
+    </section>
+
+    <aside class="side" aria-label="Game panel">
+      <section class="card status-card">
+        <div class="status-dot" id="status-dot" aria-hidden="true"></div>
+        <div class="status-body">
+          <p class="status-turn" id="status-turn">Your move</p>
+          <p class="status-detail" id="status-detail">Playing white against the computer</p>
+        </div>
+      </section>
+
+      <section class="card controls-card" aria-labelledby="ctrl-head">
+        <h2 id="ctrl-head" class="card-title">Match setup</h2>
+        <div class="ctl-row">
+          <label class="ctl-label" for="side-select">Play as</label>
+          <div class="seg" id="side-select" role="radiogroup" aria-label="Your color">
+            <button class="seg-btn is-active" data-side="w" type="button" role="radio" aria-checked="true">White</button>
+            <button class="seg-btn" data-side="b" type="button" role="radio" aria-checked="false">Black</button>
+          </div>
+        </div>
+        <div class="ctl-row">
+          <label class="ctl-label" id="lvl-label">Computer level</label>
+          <div class="seg" id="lvl-select" role="radiogroup" aria-labelledby="lvl-label" aria-label="Computer difficulty">
+            <button class="seg-btn" data-level="1" type="button" role="radio" aria-checked="false">Casual</button>
+            <button class="seg-btn is-active" data-level="2" type="button" role="radio" aria-checked="true">Sharp</button>
+            <button class="seg-btn" data-level="3" type="button" role="radio" aria-checked="false">Ruthless</button>
+          </div>
+        </div>
+        <p class="ctl-hint" id="ctl-hint">Changes apply on the next new game.</p>
+      </section>
+
+      <section class="card moves-card" aria-labelledby="moves-head">
+        <h2 id="moves-head" class="card-title">Moves</h2>
+        <ol class="move-list" id="move-list"></ol>
+        <div class="moves-foot">
+          <span class="moves-count" id="moves-count">0 moves</span>
+          <button id="undo" class="btn ghost sm" type="button">Take back</button>
+        </div>
+      </section>
+
+      <section class="card legend-card">
+        <h2 class="card-title">How to play</h2>
+        <ul class="legend">
+          <li>Click a piece, then a highlighted square to move.</li>
+          <li>Dots mark quiet moves; rings mark captures.</li>
+          <li>Castling: move the king two squares toward a rook.</li>
+          <li>Drag pieces with the mouse or touch, too.</li>
+        </ul>
+      </section>
+    </aside>
+  </main>
+
+  <footer class="footer">
+    <div class="foot-inner">
+      <p>Full FIDE rules: castling, en passant, promotion, threefold repetition, 50-move rule, and insufficient material draws.</p>
+      <a href="https://github.com/MuhammadAwais047/chess-game" target="_blank" rel="noopener">Source on GitHub</a>
+    </div>
+  </footer>
+
+  <div id="toast" class="toast" role="status"></div>
+  <div id="live" class="sr-only" aria-live="polite"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
