@@ -17,10 +17,21 @@
     return b;
   })();
 
-  const GLYPH = {
-    wK: "♔", wQ: "♕", wR: "♖", wB: "♗", wN: "♘", wP: "♙",
-    bK: "♚", bQ: "♛", bR: "♜", bB: "♝", bN: "♞", bP: "♟",
+  const PIECE_SHAPE = {
+    P: '<path d="M22 48c5-7 6-12 6-18h8c0 6 1 11 6 18Z"/><circle cx="32" cy="21" r="8"/><path d="M25 31h14v5H25Z"/>',
+    N: '<path d="M20 48c1-8 5-13 11-19l-8 4-9-5 9-15 7-3 8 2 4 5c7 5 8 17 5 31Z"/><path d="m24 14 1-8 8 6M31 29l8-7M18 26l6 1" fill="none"/><path d="M36 33c-4 5-6 9-6 15" fill="none" stroke="var(--piece-detail)"/><circle cx="29" cy="20" r="1.7" fill="var(--piece-stroke)" stroke="none"/>',
+    B: '<path d="M22 48c6-7 6-11 6-15-9-5-7-11 4-23 11 12 13 18 4 23 0 4 0 8 6 15Z"/><circle cx="32" cy="8" r="3"/><path d="m34 17-6 9" fill="none" stroke="var(--piece-detail)"/><path d="M24 35h16v5H24Z"/>',
+    R: '<path d="M18 12h7v8h4v-8h6v8h4v-8h7v17l-7 6 3 13H22l3-13-7-6Z"/><path d="M19 29h26M25 35h14" fill="none" stroke="var(--piece-detail)"/>',
+    Q: '<path d="m18 19 8 7 6-14 6 14 8-7-5 18H23Z"/><circle cx="17" cy="16" r="3"/><circle cx="32" cy="9" r="3"/><circle cx="47" cy="16" r="3"/><path d="M24 36h16l-2 6 5 6H21l5-6Z"/><path d="M25 41h14" fill="none" stroke="var(--piece-detail)"/>',
+    K: '<path d="M29 5h6v6h6v6h-6v7h-6v-7h-6v-6h6Z"/><path d="M24 38c-1-7-9-9-7-16 1-6 10-5 15 2 5-7 14-8 15-2 2 7-6 9-7 16l3 10H21Z"/><path d="M24 38h16M32 25v12" fill="none" stroke="var(--piece-detail)"/>',
   };
+  function pieceArtwork(piece) {
+    return '<svg class="piece-art" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" aria-hidden="true" focusable="false">' +
+      '<g fill="var(--piece-fill)" stroke="var(--piece-stroke)" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round">' +
+      PIECE_SHAPE[typeOf(piece)] + '<path d="M19 48h26l5 9H14Z"/><path d="M20 53h24" fill="none" stroke="var(--piece-detail)"/></g></svg>';
+  }
+  const PIECE_NAME = { K: "king", Q: "queen", R: "rook", B: "bishop", N: "knight", P: "pawn" };
+  const LEVEL_NAME = ["", "Casual", "Sharp", "Ruthless"];
   const VAL = { P: 100, N: 320, B: 330, R: 500, Q: 900, K: 20000 };
 
   function sqName(i) { return FILES[i % 8] + (8 - Math.floor(i / 8)); }
@@ -447,9 +458,10 @@
     gameOver: null,     // { title, sub }
     thinking: false,
     pendingPromo: null, // { from, to }
-    undoArmed: false,
     lastMove: null,
     dragged: null,
+    dragStart: null,
+    dragGhost: null,
     focusSq: 52,        // roving tabindex for keyboard play
   };
 
@@ -459,8 +471,8 @@
     const ids = ["board", "promo-overlay", "promo-row", "game-over", "over-title", "over-sub",
       "over-new", "over-close", "top-captured", "bottom-captured", "top-score", "bottom-score",
       "top-strip", "bottom-strip", "top-name", "bottom-name",
-      "status-dot", "status-turn", "status-detail", "new-game", "flip", "undo",
-      "move-list", "moves-count", "toast", "live", "side-select", "lvl-select", "ctl-hint"];
+      "status-card", "status-turn", "status-detail", "new-game", "flip", "undo",
+      "move-list", "moves-count", "toast", "live", "ctl-hint", "apply-setup", "promo-cancel"];
     for (const id of ids) els[id] = document.getElementById(id);
   }
 
@@ -472,7 +484,13 @@
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => els.toast.classList.remove("show"), 2600);
   }
-  function announce(msg) { els.live.textContent = msg; }
+  // Clear first so repeated identical messages are announced again.
+  let announceTimer = null;
+  function announce(msg) {
+    els.live.textContent = "";
+    clearTimeout(announceTimer);
+    announceTimer = setTimeout(() => { els.live.textContent = msg; }, 50);
+  }
 
   // ---------- Rendering ----------
   function displayOrder() {
@@ -485,53 +503,75 @@
     const frag = document.createDocumentFragment();
     const hadFocus = els.board.contains(document.activeElement);
     const checkSq = inCheck(state.pos, state.pos.turn) ? state.pos.kings[state.pos.turn] : null;
+    const order = displayOrder();
 
-    for (const idx of displayOrder()) {
-      const f = fileOf(idx), r = rankOf(idx);
-      const light = (f + r) % 2 === 0;
-      const sq = document.createElement("div");
-      sq.className = "sq " + (light ? "light" : "dark");
-      sq.dataset.sq = idx;
-      sq.setAttribute("role", "gridcell");
-      sq.setAttribute("aria-label", sqName(idx) + (state.pos.board[idx] ? " " + pieceName(state.pos.board[idx]) : " empty"));
-      sq.setAttribute("tabindex", idx === state.focusSq ? "0" : "-1");
+    for (let row = 0; row < 8; row++) {
+      const rowEl = document.createElement("div");
+      rowEl.className = "board-row";
+      rowEl.setAttribute("role", "row");
+      rowEl.setAttribute("aria-rowindex", String(row + 1));
 
-      // Coordinates on edges (respect flip).
-      const showFile = state.flipped ? r === 0 : r === 7;
-      const showRank = state.flipped ? f === 7 : f === 0;
-      if (showFile) {
-        const c = document.createElement("span");
-        c.className = "coord file"; c.textContent = FILES[f];
-        sq.appendChild(c);
-      }
-      if (showRank) {
-        const c = document.createElement("span");
-        c.className = "coord rank"; c.textContent = 8 - r;
-        sq.appendChild(c);
-      }
+      for (let col = 0; col < 8; col++) {
+        const idx = order[row * 8 + col];
+        const f = fileOf(idx), r = rankOf(idx);
+        const light = (f + r) % 2 === 0;
+        const piece = state.pos.board[idx];
+        const legal = state.legalForSelected.find(m => m.to === idx);
+        const isCapture = legal && (piece || legal.flags === "ep");
 
-      if (state.lastMove && (idx === state.lastMove.from || idx === state.lastMove.to)) {
-        sq.classList.add("lastmove");
-      }
-      if (idx === state.selected) sq.classList.add("sel");
-      if (idx === checkSq) sq.classList.add("check");
+        const sq = document.createElement("div");
+        sq.className = "sq " + (light ? "light" : "dark");
+        sq.dataset.sq = idx;
+        sq.setAttribute("role", "gridcell");
+        sq.setAttribute("aria-colindex", String(col + 1));
+        sq.setAttribute("aria-selected", idx === state.selected ? "true" : "false");
+        sq.setAttribute("tabindex", idx === state.focusSq ? "0" : "-1");
 
-      const legal = state.legalForSelected.find(m => m.to === idx);
-      if (legal) {
-        sq.classList.add("hint");
-        if (state.pos.board[idx] || legal.flags === "ep") sq.classList.add("cap");
-        sq.classList.add("hoverable");
-      }
+        let label = sqName(idx) + ", " + (piece ? pieceName(piece) : "empty");
+        if (idx === checkSq) label += ", king in check";
+        if (idx === state.selected) label += ", selected";
+        if (legal) label += isCapture ? ", legal capture" : ", legal move";
+        sq.setAttribute("aria-label", label);
 
-      const piece = state.pos.board[idx];
-      if (piece) {
-        const el = document.createElement("span");
-        el.className = "piece " + colorOf(piece);
-        el.textContent = GLYPH[piece];
-        el.dataset.sq = idx;
-        sq.appendChild(el);
+        // Coordinates on edges (respect flip).
+        const showFile = state.flipped ? r === 0 : r === 7;
+        const showRank = state.flipped ? f === 7 : f === 0;
+        if (showFile) {
+          const c = document.createElement("span");
+          c.className = "coord file"; c.textContent = FILES[f];
+          c.setAttribute("aria-hidden", "true");
+          sq.appendChild(c);
+        }
+        if (showRank) {
+          const c = document.createElement("span");
+          c.className = "coord rank"; c.textContent = 8 - r;
+          c.setAttribute("aria-hidden", "true");
+          sq.appendChild(c);
+        }
+
+        if (state.lastMove && (idx === state.lastMove.from || idx === state.lastMove.to)) {
+          sq.classList.add("lastmove");
+        }
+        if (idx === state.selected) sq.classList.add("sel");
+        if (idx === checkSq) sq.classList.add("check");
+
+        if (legal) {
+          sq.classList.add("hint");
+          if (isCapture) sq.classList.add("cap");
+          sq.classList.add("hoverable");
+        }
+
+        if (piece) {
+          const el = document.createElement("span");
+          el.className = "piece " + colorOf(piece);
+          el.innerHTML = pieceArtwork(piece);
+          el.dataset.sq = idx;
+          el.setAttribute("aria-hidden", "true");
+          sq.appendChild(el);
+        }
+        rowEl.appendChild(sq);
       }
-      frag.appendChild(sq);
+      frag.appendChild(rowEl);
     }
     els.board.innerHTML = "";
     els.board.appendChild(frag);
@@ -542,37 +582,41 @@
   }
 
   function pieceName(p) {
-    const names = { K: "king", Q: "queen", R: "rook", B: "bishop", N: "knight", P: "pawn" };
-    return (colorOf(p) === "w" ? "white " : "black ") + names[typeOf(p)];
+    return (colorOf(p) === "w" ? "white " : "black ") + PIECE_NAME[typeOf(p)];
   }
 
   function renderStrips() {
-    // Captured pieces: pieces of color X captured by the other side.
-    const startCounts = { P: 8, N: 2, B: 2, R: 2, Q: 1, K: 1 };
-    const current = { w: {}, b: {} };
-    for (const p of state.pos.board) if (p) current[colorOf(p)][typeOf(p)] = (current[colorOf(p)][typeOf(p)] || 0) + 1;
-    const missing = (color) => {
-      const out = [];
-      for (const t of ["Q", "R", "B", "N", "P"]) {
-        const miss = startCounts[t] - (current[color][t] || 0);
-        for (let i = 0; i < miss; i++) out.push(GLYPH[color + t]);
-      }
-      return out;
+    // Captures come from moves actually made, so promotion cannot fabricate a
+    // missing pawn and undo rolls the list back automatically.
+    const capturesBy = (c) => state.history
+      .filter(h => colorOf(h.move.piece) === c && h.move.capture)
+      .map(h => h.move.capture);
+    const group = (pieces) => {
+      const counts = {};
+      for (const p of pieces) counts[typeOf(p)] = (counts[typeOf(p)] || 0) + 1;
+      return ["Q", "R", "B", "N", "P"].filter(t => counts[t]).map(t => ({ type: t, count: counts[t] }));
     };
-    // Pieces each side has captured.
-    const whiteTook = missing("b");
-    const blackTook = missing("w");
-    // If promotion happened, counts can go negative; clamp visuals.
-    const clamp = (arr, max) => arr.slice(0, 16);
+    const whiteTook = group(capturesBy("w"));
+    const blackTook = group(capturesBy("b"));
 
     const topColor = state.flipped ? "w" : "b";
     const bottomColor = topColor === "w" ? "b" : "w";
     const colorName = (c) => (c === "w" ? "white" : "black");
+    const describe = (groups) => groups.length
+      ? groups.map(g => g.count + " " + PIECE_NAME[g.type] + (g.count > 1 ? "s" : "")).join(", ")
+      : "nothing";
+    const capturedArt = (groups, color) => groups.flatMap(g => Array.from({ length: g.count }, () =>
+      '<span class="captured-piece ' + color + '" aria-hidden="true">' + pieceArtwork(color + g.type) + '</span>'
+    )).join("");
 
-    els["top-captured"].textContent = clamp(topColor === "w" ? whiteTook : blackTook).join("");
-    els["bottom-captured"].textContent = clamp(bottomColor === "w" ? whiteTook : blackTook).join("");
-    els["top-captured"].setAttribute("aria-label", "Pieces captured by " + colorName(topColor));
-    els["bottom-captured"].setAttribute("aria-label", "Pieces captured by " + colorName(bottomColor));
+    const topGroups = topColor === "w" ? whiteTook : blackTook;
+    const bottomGroups = bottomColor === "w" ? whiteTook : blackTook;
+    els["top-captured"].innerHTML = capturedArt(topGroups, topColor === "w" ? "b" : "w");
+    els["bottom-captured"].innerHTML = capturedArt(bottomGroups, bottomColor === "w" ? "b" : "w");
+    els["top-captured"].setAttribute("aria-label",
+      colorName(topColor) + " has captured " + describe(topGroups));
+    els["bottom-captured"].setAttribute("aria-label",
+      colorName(bottomColor) + " has captured " + describe(bottomGroups));
 
     // Material score (in pawns) — positive for white.
     let score = 0;
@@ -581,8 +625,15 @@
       score += colorOf(p) === "w" ? VAL[typeOf(p)] : -VAL[typeOf(p)];
     }
     const advantage = (c) => Math.round((c === "w" ? Math.max(score, 0) : Math.max(-score, 0)) / 100);
-    els["top-score"].textContent = advantage(topColor) ? "+" + advantage(topColor) : "—";
-    els["bottom-score"].textContent = advantage(bottomColor) ? "+" + advantage(bottomColor) : "—";
+    const scoreLabel = (() => {
+      const n = Math.round(Math.abs(score) / 100);
+      if (!n) return "Material even";
+      return colorName(score > 0 ? "w" : "b") + " ahead by " + n + " pawn" + (n === 1 ? "" : "s");
+    })();
+    els["top-score"].textContent = advantage(topColor) ? "+" + advantage(topColor) : "even";
+    els["bottom-score"].textContent = advantage(bottomColor) ? "+" + advantage(bottomColor) : "even";
+    els["top-score"].setAttribute("aria-label", scoreLabel);
+    els["bottom-score"].setAttribute("aria-label", scoreLabel);
 
     // Turn highlight.
     const turnIsTop = (state.pos.turn === "b") !== state.flipped;
@@ -590,12 +641,17 @@
     els["bottom-strip"].classList.toggle("strip-turn", !turnIsTop && !state.gameOver);
 
     // Names and king icons follow the strip's color.
-    const you = "You (" + colorName(state.playerColor) + ")";
-    const cpu = "Computer (" + colorName(state.playerColor === "w" ? "b" : "w") + ")";
+    const sideLabel = (c) => (c === "w" ? "White" : "Black");
+    const you = "You · " + sideLabel(state.playerColor);
+    const cpu = "Computer · " + sideLabel(state.playerColor === "w" ? "b" : "w");
     els["top-name"].textContent = topColor === state.playerColor ? you : cpu;
     els["bottom-name"].textContent = bottomColor === state.playerColor ? you : cpu;
-    els["top-strip"].querySelector(".strip-piece").textContent = GLYPH[topColor + "K"];
-    els["bottom-strip"].querySelector(".strip-piece").textContent = GLYPH[bottomColor + "K"];
+    const topKing = els["top-strip"].querySelector(".strip-piece");
+    const bottomKing = els["bottom-strip"].querySelector(".strip-piece");
+    topKing.innerHTML = pieceArtwork(topColor + "K");
+    topKing.className = "strip-piece " + topColor;
+    bottomKing.innerHTML = pieceArtwork(bottomColor + "K");
+    bottomKing.className = "strip-piece " + bottomColor;
   }
 
   function renderMoves() {
@@ -611,21 +667,19 @@
     els["move-list"].innerHTML = rows.join("");
     els["move-list"].scrollTop = els["move-list"].scrollHeight;
     const n = state.history.length;
-    els["moves-count"].textContent = n + (n === 1 ? " move" : " moves");
+    const fullMoves = Math.ceil(n / 2);
+    els["moves-count"].textContent = fullMoves + (fullMoves === 1 ? " move" : " moves");
   }
 
   function renderStatus() {
+    els["status-card"].setAttribute("aria-busy", state.thinking ? "true" : "false");
     els.undo.disabled = !state.history.length || state.thinking;
-    const dot = els["status-dot"];
-    dot.className = "status-dot";
     if (state.gameOver) {
-      dot.classList.add("alert");
       els["status-turn"].textContent = state.gameOver.title;
       els["status-detail"].textContent = state.gameOver.sub;
       return;
     }
     if (state.thinking) {
-      dot.classList.add("think");
       els["status-turn"].textContent = "Computer thinking…";
       els["status-detail"].textContent = "Searching for the best reply";
       return;
@@ -633,13 +687,22 @@
     const yourTurn = state.pos.turn === state.playerColor;
     els["status-turn"].textContent = yourTurn ? "Your move" : "Computer's move";
     if (inCheck(state.pos, state.pos.turn)) {
-      dot.classList.add("alert");
       els["status-detail"].textContent = (yourTurn ? "You are" : "The computer is") + " in check";
     } else {
       els["status-detail"].textContent = yourTurn
-        ? "Move " + state.pos.fullmove + " · playing " + (state.playerColor === "w" ? "white" : "black")
-        : "Move " + state.pos.fullmove + " · level " + ["", "casual", "sharp", "ruthless"][state.aiLevel];
+        ? "Move " + state.pos.fullmove + " · You play " + (state.playerColor === "w" ? "White" : "Black")
+        : "Move " + state.pos.fullmove + " · " + LEVEL_NAME[state.aiLevel];
     }
+  }
+
+  function renderSetupHint() {
+    const side = state.pendingSide === "w" ? "White" : "Black";
+    const level = LEVEL_NAME[state.pendingLevel];
+    const changed = state.pendingSide !== state.playerColor || state.pendingLevel !== state.aiLevel;
+    els["ctl-hint"].textContent = changed
+      ? "Next game: You play " + side + " · " + level + "."
+      : "You play " + side + " · " + level + ".";
+    els["apply-setup"].hidden = !changed;
   }
 
   function renderAll() {
@@ -647,6 +710,87 @@
     renderStrips();
     renderMoves();
     renderStatus();
+    renderSetupHint();
+  }
+
+  // ---------- Modal dialogs ----------
+  const modalState = { overlay: null, returnTo: null, inerted: [] };
+
+  function focusables(root) {
+    return [...root.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')]
+      .filter(el => !el.disabled && el.offsetParent !== null);
+  }
+
+  function outsideNodes(overlay) {
+    const out = new Set();
+    let node = overlay.parentElement;
+    while (node && node !== document.documentElement) {
+      for (const sib of node.children) {
+        if (sib === overlay || sib.contains(overlay)) continue;
+        if (sib.tagName === "SCRIPT" || sib.tagName === "STYLE") continue;
+        out.add(sib);
+      }
+      if (node === document.body) break;
+      node = node.parentElement;
+    }
+    return out;
+  }
+
+  function openModal(overlay, preferred) {
+    if (!overlay) return;
+    if (modalState.overlay && modalState.overlay !== overlay) closeModal(modalState.overlay, false);
+    modalState.overlay = overlay;
+    const active = document.activeElement;
+    modalState.returnTo = active && active !== document.body && active !== document.documentElement ? active : null;
+    for (const el of outsideNodes(overlay)) {
+      if (!("inert" in el)) continue;
+      if (!el.inert) modalState.inerted.push(el);
+      el.inert = true;
+    }
+    overlay.hidden = false;
+    document.body.classList.add("modal-open");
+    const target = preferred || focusables(overlay)[0] || overlay.querySelector("[role]") || overlay;
+    if (target && target.focus) target.focus({ preventScroll: true });
+  }
+
+  function closeModal(overlay, restoreFocus = true) {
+    if (!overlay) return;
+    if (overlay.hidden && modalState.overlay !== overlay) return;
+    overlay.hidden = true;
+    for (const el of modalState.inerted) el.inert = false;
+    modalState.inerted = [];
+    if (modalState.overlay === overlay) modalState.overlay = null;
+    document.body.classList.remove("modal-open");
+    if (!restoreFocus) return;
+    const target = modalState.returnTo && document.contains(modalState.returnTo)
+      ? modalState.returnTo
+      : els.board.querySelector('.sq[tabindex="0"]');
+    modalState.returnTo = null;
+    if (target && target.focus) target.focus({ preventScroll: true });
+  }
+
+  function onModalKeydown(ev) {
+    const overlay = modalState.overlay;
+    if (!overlay) return;
+    if (ev.key === "Escape") {
+      ev.preventDefault();
+      if (overlay === els["promo-overlay"]) cancelPromo();
+      else {
+        closeModal(overlay);
+        announce("Reviewing the final position. The game is over.");
+      }
+      return;
+    }
+    if (ev.key !== "Tab") return;
+    const list = focusables(overlay);
+    if (!list.length) { ev.preventDefault(); return; }
+    const first = list[0], last = list[list.length - 1];
+    const inside = overlay.contains(document.activeElement);
+    if (ev.shiftKey && (!inside || document.activeElement === first)) {
+      ev.preventDefault(); last.focus();
+    } else if (!ev.shiftKey && (!inside || document.activeElement === last)) {
+      ev.preventDefault(); first.focus();
+    }
   }
 
   // ---------- Game flow ----------
@@ -660,15 +804,15 @@
     const moves = legalMoves(state.pos);
     if (!moves.length) {
       if (inCheck(state.pos, state.pos.turn)) {
-        const winner = state.pos.turn === "w" ? "Black" : "White";
-        endGame("Checkmate", winner + " wins", "checkmate");
+        const playerWon = state.pos.turn !== state.playerColor;
+        endGame(playerWon ? "You win" : "Computer wins", "Checkmate", "checkmate");
       } else {
-        endGame("Stalemate", "Draw — no legal moves", "stalemate");
+        endGame("Draw", "Stalemate — no legal moves", "stalemate");
       }
       return true;
     }
     if (state.pos.halfmove >= 100) {
-      endGame("Draw", "50-move rule", "fifty");
+      endGame("Draw", "Draw by the 50-move rule", "fifty");
       return true;
     }
     if (insufficientMaterial(state.pos.board)) {
@@ -686,9 +830,10 @@
     state.gameOver = { title, sub };
     els["over-title"].textContent = title;
     els["over-sub"].textContent = sub;
-    els["game-over"].hidden = false;
+    renderStrips();
     renderStatus();
-    announce(title + ". " + sub);
+    openModal(els["game-over"], els["over-new"]);
+    announce(title + ". " + sub + ".");
   }
 
   function commitMove(move, san) {
@@ -719,33 +864,46 @@
     const move = candidates[0];
     const san = moveToSan(state.pos, move, all);
     commitMove(move, san);
-    announce("You played " + san);
+    if (!state.gameOver) announce("You played " + san);
     return true;
   }
 
   function showPromo(candidates) {
     const color = state.playerColor;
     els["promo-row"].innerHTML = "";
+    let firstBtn = null;
     for (const t of ["Q", "R", "B", "N"]) {
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "promo-btn " + color;
-      btn.textContent = GLYPH[color + t];
-      btn.setAttribute("aria-label", "Promote to " + t);
+      btn.innerHTML = pieceArtwork(color + t);
+      btn.setAttribute("aria-label", "Promote to " + PIECE_NAME[t]);
       btn.addEventListener("click", () => {
         const move = candidates.find(m => m.promo === t);
-        els["promo-overlay"].hidden = true;
+        closeModal(els["promo-overlay"], false);
         state.pendingPromo = null;
         if (move) {
           const all = legalMoves(state.pos);
           const san = moveToSan(state.pos, move, all);
           commitMove(move, san);
-          announce("You played " + san);
+          if (!state.gameOver) announce("You played " + san);
         }
+        const cell = els.board.querySelector(`.sq[data-sq="${state.focusSq}"]`);
+        if (cell) cell.focus({ preventScroll: true });
       });
       els["promo-row"].appendChild(btn);
+      if (!firstBtn) firstBtn = btn;
     }
-    els["promo-overlay"].hidden = false;
+    openModal(els["promo-overlay"], firstBtn);
+  }
+
+  function cancelPromo() {
+    state.pendingPromo = null;
+    state.selected = null;
+    state.legalForSelected = [];
+    closeModal(els["promo-overlay"]);
+    renderBoard();
+    announce("Promotion cancelled");
   }
 
   function maybeAiMove() {
@@ -753,6 +911,10 @@
     const token = ++state.aiToken;
     state.thinking = true;
     renderStatus();
+    // Announce after the player's own move, before the search blocks.
+    setTimeout(() => {
+      if (state.thinking && token === state.aiToken) announce("Computer thinking…");
+    }, 120);
     // Let the UI paint before the search blocks.
     setTimeout(() => {
       if (token !== state.aiToken) return; // a new game superseded this search
@@ -761,7 +923,7 @@
       if (!move) { checkGameOver(); return; }
       const san = moveToSan(state.pos, move, legalMoves(state.pos));
       commitMove(move, san);
-      announce("Computer played " + san);
+      if (!state.gameOver) announce("Computer played " + san);
     }, 260);
   }
 
@@ -781,11 +943,22 @@
     state.thinking = false;
     state.pendingPromo = null;
     state.lastMove = null;
-    els["game-over"].hidden = true;
-    els["promo-overlay"].hidden = true;
-    els["ctl-hint"].textContent = "Playing " + (state.playerColor === "w" ? "white" : "black") + ".";
+    state.dragStart = null;
+    state.dragged = null;
+    clearDragGhost();
+    closeModal(els["game-over"], false);
+    closeModal(els["promo-overlay"], false);
     renderAll();
     maybeAiMove();
+    announce("New game. You play " + (state.playerColor === "w" ? "White" : "Black") + " · " + LEVEL_NAME[state.aiLevel] + ".");
+  }
+
+  function requestNewGame() {
+    const inProgress = state.history.length > 0 && !state.gameOver;
+    if (inProgress && !window.confirm("Start a new game? Your current game and scoresheet will be lost.")) return false;
+    newGame();
+    toast("New game. You play " + (state.playerColor === "w" ? "White" : "Black") + " · " + LEVEL_NAME[state.aiLevel]);
+    return true;
   }
 
   function undo() {
@@ -798,6 +971,7 @@
     }
     // If game over on player's own last move, just one.
     steps = Math.min(steps, state.history.length);
+    const undone = state.history.slice(state.history.length - steps).map(h => colorOf(h.move.piece));
     for (let i = 0; i < steps; i++) {
       const h = state.history.pop();
       // Repetition count rollback.
@@ -807,19 +981,49 @@
       state.pos = h.posBefore;
     }
     state.gameOver = null;
-    els["game-over"].hidden = true;
+    closeModal(els["game-over"]);
     state.lastMove = state.history.length ? state.history[state.history.length - 1].move : null;
     state.selected = null;
     state.legalForSelected = [];
     renderAll();
-    toast("Move taken back");
-    announce("Move taken back");
+    const cpuColor = state.playerColor === "w" ? "b" : "w";
+    const tookOwn = undone.includes(state.playerColor);
+    const tookReply = undone.includes(cpuColor);
+    if (tookOwn && tookReply) {
+      toast("Move and reply taken back");
+      announce("Your move and the computer's reply were taken back.");
+    } else if (tookReply) {
+      toast("Computer's move taken back");
+      announce("The computer's move was taken back.");
+    } else {
+      toast("Move taken back");
+      announce("Your move was taken back.");
+    }
   }
 
   // ---------- Interaction ----------
   function squareFromEvent(ev) {
     const el = ev.target.closest(".sq");
     return el ? Number(el.dataset.sq) : null;
+  }
+
+  function squareFromPoint(x, y) {
+    const el = document.elementFromPoint(x, y);
+    const sq = el && el.closest(".sq");
+    return sq ? Number(sq.dataset.sq) : null;
+  }
+
+  function clearDragGhost() {
+    if (state.dragGhost) {
+      state.dragGhost.remove();
+      state.dragGhost = null;
+    }
+  }
+
+  function placeDragGhost(x, y) {
+    if (!state.dragGhost) return;
+    state.dragGhost.style.left = x + "px";
+    state.dragGhost.style.top = y + "px";
   }
 
   function selectSquare(idx) {
@@ -840,14 +1044,29 @@
   }
 
   function bindEvents() {
+    function feedbackIllegal() {
+      toast("That move isn't legal.");
+      announce("That move isn't legal. Your selection is still active.");
+    }
+
     // Click-to-move.
     els.board.addEventListener("click", (ev) => {
       const idx = squareFromEvent(ev);
       if (idx === null) return;
       if (state.selected !== null) {
+        if (idx === state.selected) {
+          clearSelection();
+          announce("Selection cleared");
+          return;
+        }
         const legal = state.legalForSelected.find(m => m.to === idx);
         if (legal) {
           playerMove(state.selected, idx);
+          return;
+        }
+        const target = state.pos.board[idx];
+        if (!target || colorOf(target) !== state.playerColor) {
+          feedbackIllegal();
           return;
         }
       }
@@ -876,6 +1095,14 @@
         }
         return;
       }
+      if (ev.key === "Escape") {
+        if (state.selected !== null) {
+          ev.preventDefault();
+          clearSelection();
+          announce("Selection cleared");
+        }
+        return;
+      }
       if (ev.key === "Enter" || ev.key === " ") {
         ev.preventDefault();
         const sqEl = squareEl(state.focusSq);
@@ -885,77 +1112,132 @@
     function squareEl(i) { return els.board.querySelector(`.sq[data-sq="${i}"]`); }
     function focusSquare(i) { const el = squareEl(i); if (el) el.focus(); }
 
-    // Drag & drop (pointer events). Selection is painted in place here so the
-    // node being dragged is not replaced by a re-render mid-gesture.
+    // Drag & drop (pointer events). A small movement threshold keeps touch
+    // swipes scrolling the page instead of grabbing a piece.
     els.board.addEventListener("pointerdown", (ev) => {
+      if (ev.pointerType === "mouse" && ev.button !== 0) return;
       const idx = squareFromEvent(ev);
       if (idx === null) return;
       const piece = state.pos.board[idx];
       if (!piece || colorOf(piece) !== state.playerColor || state.gameOver || state.thinking) return;
-      state.selected = idx;
-      state.legalForSelected = legalMoves(state.pos).filter(m => m.from === idx);
-      const sqEl = ev.target.closest(".sq");
-      if (sqEl) sqEl.classList.add("sel");
       const pieceEl = ev.target.closest(".piece");
       if (!pieceEl) return;
-      state.dragged = { from: idx, el: pieceEl };
-      pieceEl.classList.add("dragging");
-      try { pieceEl.setPointerCapture?.(ev.pointerId); } catch { /* pointer already released */ }
+      state.dragStart = { from: idx, el: pieceEl, x: ev.clientX, y: ev.clientY, id: ev.pointerId, active: false };
+    });
+    els.board.addEventListener("pointermove", (ev) => {
+      const d = state.dragStart;
+      if (!d || d.id !== ev.pointerId) return;
+      if (!d.active) {
+        if (Math.hypot(ev.clientX - d.x, ev.clientY - d.y) < 8) return;
+        d.active = true;
+        state.selected = d.from;
+        state.legalForSelected = legalMoves(state.pos).filter(m => m.from === d.from);
+        const sqEl = squareEl(d.from);
+        if (sqEl) sqEl.classList.add("sel");
+        state.dragged = { from: d.from, el: d.el };
+        d.el.classList.add("dragging");
+        const rect = d.el.getBoundingClientRect();
+        const ghost = d.el.cloneNode(true);
+        ghost.classList.remove("dragging");
+        ghost.classList.add("drag-ghost");
+        ghost.setAttribute("aria-hidden", "true");
+        ghost.style.width = rect.width + "px";
+        ghost.style.height = rect.height + "px";
+        document.body.appendChild(ghost);
+        state.dragGhost = ghost;
+        placeDragGhost(ev.clientX, ev.clientY);
+        for (const m of state.legalForSelected) {
+          const cell = squareEl(m.to);
+          if (!cell) continue;
+          cell.classList.add("hint", "hoverable");
+          if (state.pos.board[m.to] || m.flags === "ep") cell.classList.add("cap");
+        }
+        try { d.el.setPointerCapture?.(ev.pointerId); } catch { /* pointer already released */ }
+      }
+      placeDragGhost(ev.clientX, ev.clientY);
+      const drop = squareFromPoint(ev.clientX, ev.clientY);
+      for (const cell of els.board.querySelectorAll(".sq.drop")) cell.classList.remove("drop");
+      if (drop !== null && drop !== d.from && state.legalForSelected.some(m => m.to === drop)) {
+        const cell = squareEl(drop);
+        if (cell) cell.classList.add("drop");
+      }
+      if (ev.cancelable) ev.preventDefault();
     });
     els.board.addEventListener("pointerup", (ev) => {
-      if (!state.dragged) return;
-      const { from, el } = state.dragged;
-      el.classList.remove("dragging");
-      state.dragged = null;
-      const idx = squareFromEvent(ev);
-      if (idx !== null && idx !== from) {
-        if (!playerMove(from, idx)) renderBoard();
+      const d = state.dragStart;
+      state.dragStart = null;
+      if (!d || !d.active) return; // a tap: the click handler owns it
+      if (state.dragged) {
+        state.dragged.el.classList.remove("dragging");
+        state.dragged = null;
+      }
+      clearDragGhost();
+      const idx = squareFromPoint(ev.clientX, ev.clientY);
+      if (idx !== null && idx !== d.from) {
+        if (!playerMove(d.from, idx)) {
+          renderBoard();
+          feedbackIllegal();
+        }
       } else {
         renderBoard();
       }
     });
     els.board.addEventListener("pointercancel", () => {
+      state.dragStart = null;
       if (state.dragged) {
         state.dragged.el.classList.remove("dragging");
         state.dragged = null;
-        renderBoard();
       }
+      clearDragGhost();
+      renderBoard();
     });
 
     // Controls.
-    els["new-game"].addEventListener("click", () => { newGame(); toast("New game"); });
-    els["over-new"].addEventListener("click", () => newGame());
-    els["over-close"].addEventListener("click", () => { els["game-over"].hidden = true; });
+    els["new-game"].addEventListener("click", requestNewGame);
+    els["apply-setup"].addEventListener("click", () => {
+      if (!requestNewGame()) return;
+      const cell = els.board.querySelector(`.sq[data-sq="${state.focusSq}"]`);
+      if (cell) cell.focus({ preventScroll: true });
+    });
+    els["over-new"].addEventListener("click", () => {
+      closeModal(els["game-over"], false);
+      newGame();
+    });
+    els["over-close"].addEventListener("click", () => {
+      closeModal(els["game-over"]);
+      announce("Reviewing the final position. The game is over.");
+    });
     els.flip.addEventListener("click", () => {
       state.flipped = !state.flipped;
       renderBoard();
       renderStrips();
+      toast("Viewing from " + (state.flipped ? "Black" : "White") + " · You play " + (state.playerColor === "w" ? "White" : "Black"));
+      announce("Board flipped. " + (state.flipped ? "You are viewing from black's side." : "You are viewing from white's side."));
     });
     els.undo.addEventListener("click", undo);
+    els["promo-cancel"].addEventListener("click", cancelPromo);
+    els["promo-overlay"].addEventListener("click", (ev) => {
+      if (ev.target === els["promo-overlay"]) cancelPromo();
+    });
+    document.addEventListener("keydown", onModalKeydown);
 
-    // Setup controls.
-    els["side-select"].addEventListener("click", (ev) => {
-      const btn = ev.target.closest(".seg-btn");
-      if (!btn) return;
-      for (const b of els["side-select"].querySelectorAll(".seg-btn")) {
-        const on = b === btn;
-        b.classList.toggle("is-active", on);
-        b.setAttribute("aria-checked", on ? "true" : "false");
-      }
-      state.pendingSide = btn.dataset.side;
-      els["ctl-hint"].textContent = "Playing " + (state.pendingSide === "w" ? "white" : "black") + " — applies on the next new game.";
-    });
-    els["lvl-select"].addEventListener("click", (ev) => {
-      const btn = ev.target.closest(".seg-btn");
-      if (!btn) return;
-      for (const b of els["lvl-select"].querySelectorAll(".seg-btn")) {
-        const on = b === btn;
-        b.classList.toggle("is-active", on);
-        b.setAttribute("aria-checked", on ? "true" : "false");
-      }
-      state.pendingLevel = Number(btn.dataset.level);
-      renderStatus();
-    });
+    // Setup controls (native radios inside fieldsets).
+    for (const input of document.querySelectorAll('input[name="side"]')) {
+      input.addEventListener("change", () => {
+        if (!input.checked) return;
+        state.pendingSide = input.value;
+        renderSetupHint();
+        announce(els["ctl-hint"].textContent);
+      });
+    }
+    for (const input of document.querySelectorAll('input[name="level"]')) {
+      input.addEventListener("change", () => {
+        if (!input.checked) return;
+        state.pendingLevel = Number(input.value);
+        renderSetupHint();
+        announce(els["ctl-hint"].textContent);
+      });
+    }
   }
 
   // ---------- Init ----------
