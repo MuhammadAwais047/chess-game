@@ -1,2 +1,9 @@
 qa-*.png
 selftest.js
+
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+*.pem
+*.key

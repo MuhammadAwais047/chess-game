@@ -3,7 +3,7 @@
   const revalidate = route => route.continue();
   await page.route('http://127.0.0.1:8765/**', revalidate);
   try {
-    await page.goto('http://127.0.0.1:8765/');
+    await page.goto('http://127.0.0.1:8765/?qa=1');
     await page.waitForFunction(() => window.__gambit);
     const capture = await page.evaluate(() => {
       const g = window.__gambit;

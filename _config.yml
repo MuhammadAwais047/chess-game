@@ -1,0 +1,6 @@
+# GitHub Pages (Jekyll) configuration.
+# Keep developer-only QA assets out of the published site.
+exclude:
+  - "ui-*.test.js"
+  - "DESIGN-AUDIT.md"
+  - "qa-*.png"

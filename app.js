@@ -660,12 +660,24 @@
       const num = i / 2 + 1;
       const w = state.history[i];
       const b = state.history[i + 1];
-      rows.push(`<li class="move-row"><span class="move-no">${num}.</span>` +
-        `<span class="move-san${i === state.history.length - 1 ? " latest" : ""}">${w ? w.san : ""}</span>` +
-        `<span class="move-san${i + 1 === state.history.length - 1 ? " latest" : ""}">${b ? b.san : ""}</span></li>`);
+      const row = document.createElement("li");
+      row.className = "move-row";
+      const no = document.createElement("span");
+      no.className = "move-no";
+      no.textContent = num + ".";
+      const sanW = document.createElement("span");
+      sanW.className = "move-san" + (i === state.history.length - 1 ? " latest" : "");
+      sanW.textContent = w ? w.san : "";
+      const sanB = document.createElement("span");
+      sanB.className = "move-san" + (i + 1 === state.history.length - 1 ? " latest" : "");
+      sanB.textContent = b ? b.san : "";
+      row.append(no, sanW, sanB);
+      rows.push(row);
     }
-    els["move-list"].innerHTML = rows.join("");
-    els["move-list"].scrollTop = els["move-list"].scrollHeight;
+    const list = els["move-list"];
+    list.textContent = "";
+    rows.forEach(row => list.appendChild(row));
+    list.scrollTop = list.scrollHeight;
     const n = state.history.length;
     const fullMoves = Math.ceil(n / 2);
     els["moves-count"].textContent = fullMoves + (fullMoves === 1 ? " move" : " moves");
@@ -1250,13 +1262,16 @@
 
   document.addEventListener("DOMContentLoaded", init);
 
-  // Expose a tiny API for QA (read-only).
-  window.__gambit = {
-    state,
-    legalMoves,
-    playerMove,
-    newGame,
-    applyMove,
-    positionKey,
-  };
+  // Expose a tiny API for QA (read-only). Only enabled with ?qa=1 so the
+  // published game does not hand out mutable game state.
+  if (new URLSearchParams(window.location.search).get("qa") === "1") {
+    window.__gambit = {
+      state,
+      legalMoves,
+      playerMove,
+      newGame,
+      applyMove,
+      positionKey,
+    };
+  }
 })();

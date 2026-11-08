@@ -7,7 +7,7 @@
   const revalidate = route => route.continue();
   await page.route('http://127.0.0.1:8765/**', revalidate);
   try {
-    await page.goto('http://127.0.0.1:8765/');
+    await page.goto('http://127.0.0.1:8765/?qa=1');
     await page.waitForFunction(() => window.__gambit);
     check(await page.locator('#board .piece svg').count() === 32, 'All 32 starting pieces must render as scalable illustrations');
     check(await page.locator('#board [role="row"]').count() === 8, 'Board must contain eight accessible rows');
@@ -88,7 +88,7 @@
     try {
       const touchPage = await touchContext.newPage();
       touchPage.on('pageerror', onError);
-      await touchPage.goto('http://127.0.0.1:8765/');
+      await touchPage.goto('http://127.0.0.1:8765/?qa=1');
       await touchPage.locator('.sq[data-sq="52"]').tap();
       check(await touchPage.locator('.sq[aria-selected="true"]').count() === 1, 'Touch tap must select a pawn');
       await touchPage.locator('.sq[data-sq="36"]').tap();
